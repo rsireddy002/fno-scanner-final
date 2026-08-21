@@ -26,6 +26,7 @@ from fno_universe import load_fno_universe
 from upstox_downloads import download_full_quotes, BATCH_SIZE
 from delta_zone_scanner import run_scan as run_delta_zone_scan
 from rvol_atr_baseline import load_baseline
+from paper_trader import PaperTradeState, manage_exits, find_new_entries
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -142,7 +143,7 @@ def score_row(equity_quote, futures_quote, baseline_entry, elapsed_minutes):
 
 
 def poll_loop(state: ScannerState, universe: dict, access_token: str, stop_event: threading.Event,
-              baseline: dict):
+              baseline: dict, pt_state: PaperTradeState):
     state.running = True
 
     # Defensive: only keep entries with the expected shape. If universe ever
@@ -209,6 +210,13 @@ def poll_loop(state: ScannerState, universe: dict, access_token: str, stop_event
             state.set_result(df)
             state.debug_sample = debug_sample
 
+            # ---- Paper trading: exits are free (reuse this cycle's quotes),
+            # entries are bounded (top RVOL candidates only, capped count) ----
+            import datetime
+            now_ist = datetime.datetime.now(IST)
+            manage_exits(pt_state, equity_by_token, universe, now_ist)
+            find_new_entries(pt_state, df, universe, access_token, now_ist)
+
         except Exception as e:
             # Keep the last good dataframe visible on screen rather than
             # blanking it -- a single rate-limited cycle (e.g. while the
@@ -261,10 +269,12 @@ def main():
     # Set up background polling thread once per session
     if "scanner_state" not in st.session_state:
         st.session_state.scanner_state = ScannerState()
+        st.session_state.pt_state = PaperTradeState()
         st.session_state.stop_event = threading.Event()
         thread = threading.Thread(
             target=poll_loop,
-            args=(st.session_state.scanner_state, universe, access_token, st.session_state.stop_event, baseline),
+            args=(st.session_state.scanner_state, universe, access_token, st.session_state.stop_event,
+                  baseline, st.session_state.pt_state),
             daemon=True,
         )
         thread.start()
@@ -321,6 +331,45 @@ def main():
         else:
             st.success(f"{len(breakout_df)} stock(s) above POC, VWAP, and both delta zones:")
             st.dataframe(breakout_df, width='stretch')
+
+    # -----------------------------------------------------------------
+    # Paper Trading (simulated -- no real orders). Runs inside the same
+    # poll cycle: exits are free, entries check only top-RVOL candidates.
+    # State resets on app reboot/redeploy (Streamlit Cloud filesystem is
+    # ephemeral) -- this is a same-session log, not a permanent journal.
+    # -----------------------------------------------------------------
+    st.divider()
+    st.subheader("Paper Trading (Simulated)")
+    st.caption(
+        f"Long-only, opens on the same delta-zone trigger as the scan above. "
+        f"Max {2} open positions, checks top RVOL candidates each cycle. "
+        f"No real orders are ever placed. Resets if the app reboots."
+    )
+
+    pt_state: PaperTradeState = st.session_state.pt_state
+    open_positions, closed_trades, enabled = pt_state.get()
+
+    toggle_col, _ = st.columns([2, 3])
+    with toggle_col:
+        new_enabled = st.toggle("Enable paper trading", value=enabled)
+        if new_enabled != enabled:
+            pt_state.set_enabled(new_enabled)
+
+    if open_positions:
+        st.write("**Open Positions**")
+        st.dataframe(pd.DataFrame(open_positions.values()), width='stretch')
+    else:
+        st.caption("No open positions.")
+
+    if closed_trades:
+        st.write("**Closed Trades**")
+        trades_df = pd.DataFrame(closed_trades)
+        st.dataframe(trades_df, width='stretch')
+        total_r = trades_df["r_multiple"].sum()
+        wins = (trades_df["r_multiple"] > 0).sum()
+        st.success(f"Total R: {total_r:.2f} | Win rate: {wins}/{len(trades_df)} ({100*wins/len(trades_df):.0f}%)")
+    else:
+        st.caption("No closed trades yet.")
 
     # Lightweight auto-refresh of the UI (data itself refreshes in the background thread)
     time.sleep(2)
