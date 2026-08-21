@@ -42,7 +42,6 @@ TARGET_R_MULTIPLE = 1.75  # Stage 4: target = 1.75x that stop distance
 
 def _elapsed_session_minutes() -> float:
     """Minutes elapsed since 9:15 IST today, capped at a full session."""
-    import datetime
     now = datetime.datetime.now(IST)
     session_open = now.replace(hour=SESSION_START[0], minute=SESSION_START[1], second=0, microsecond=0)
     elapsed = (now - session_open).total_seconds() / 60
@@ -213,7 +212,6 @@ def poll_loop(state: ScannerState, universe: dict, access_token: str, stop_event
 
             # ---- Paper trading: exits are free (reuse this cycle's quotes),
             # entries are bounded (top RVOL candidates only, capped count) ----
-            import datetime
             now_ist = datetime.datetime.now(IST)
             manage_exits(pt_state, equity_by_token, universe, now_ist)
             find_new_entries(pt_state, df, universe, access_token, now_ist)
@@ -289,7 +287,6 @@ def main():
         if error:
             st.error(f"Last poll error: {error}")
         elif last_update:
-            import datetime
             ist_time = datetime.datetime.fromtimestamp(last_update, tz=IST)
             st.success(f"Last updated: {ist_time.strftime('%H:%M:%S')} IST")
         else:
