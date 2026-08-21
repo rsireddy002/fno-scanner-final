@@ -75,6 +75,11 @@ def build_baseline(universe: dict, access_token: str, progress_callback=None) ->
             baseline[symbol] = {"avg_daily_volume": None, "atr_pct": None}
         if progress_callback:
             progress_callback((i + 1) / total)
+        # Pacing delay -- 208 back-to-back daily-history calls with no gap
+        # can alone trigger 429s that spill over onto the concurrent live
+        # poll's own (much smaller) request. Same fix as delta_zone_scanner's
+        # run_scan.
+        time.sleep(0.15)
 
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump({"generated_at": time.time(), "baseline": baseline}, f, indent=2)
