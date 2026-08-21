@@ -1,0 +1,5 @@
+__pycache__/
+fno_universe.json
+rvol_atr_baseline.json
+*.pyc
+.env

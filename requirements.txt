@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+requests
+upstox-python-sdk
+protobuf>=4.25.0,<5
+websocket-client
+aiohttp
+plotly
