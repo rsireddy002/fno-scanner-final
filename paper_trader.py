@@ -36,6 +36,9 @@ IST = ZoneInfo("Asia/Kolkata")
 MAX_OPEN_POSITIONS = 2          # Stage 7: rank simultaneous signals, take top 1-2
 MAX_CANDIDATES_PER_CYCLE = 10   # cap heavy delta-zone checks per poll cycle
 EOD_SQUAREOFF_TIME = datetime.time(15, 20)  # IST, matches backtest_one_day.py
+POSITION_QTY = 1  # shares per paper position -- this measures signal quality,
+                   # not realistic position sizing. Change to reflect real
+                   # intended quantity if you want P&L in a meaningful rupee scale.
 
 
 class PaperTradeState:
@@ -59,8 +62,16 @@ class PaperTradeState:
         with self.lock:
             self.open_positions[symbol] = {
                 "symbol": symbol, "side": "long", "entry": entry, "stop": stop,
-                "target": target, "entry_time": entry_time,
+                "target": target, "entry_time": entry_time, "qty": POSITION_QTY,
+                "ltp": entry, "unrealized_pnl": 0.0,
             }
+
+    def _update_ltp(self, symbol, ltp):
+        with self.lock:
+            pos = self.open_positions.get(symbol)
+            if pos:
+                pos["ltp"] = ltp
+                pos["unrealized_pnl"] = round((ltp - pos["entry"]) * pos["qty"], 2)
 
     def _close(self, symbol, exit_price, reason, exit_time):
         with self.lock:
@@ -68,9 +79,10 @@ class PaperTradeState:
             if not pos:
                 return
             r_multiple = (exit_price - pos["entry"]) / (pos["entry"] - pos["stop"]) if pos["entry"] != pos["stop"] else 0
+            pnl = round((exit_price - pos["entry"]) * pos["qty"], 2)
             self.closed_trades.append({
                 **pos, "exit": exit_price, "exit_reason": reason, "exit_time": exit_time,
-                "r_multiple": round(r_multiple, 2),
+                "r_multiple": round(r_multiple, 2), "pnl": pnl,
             })
 
 
@@ -98,6 +110,8 @@ def manage_exits(pt_state: PaperTradeState, equity_by_token: dict, universe: dic
         vwap = equity_quote.get("average_price", 0) or 0
         if not ltp:
             continue
+
+        pt_state._update_ltp(symbol, ltp)
 
         if eod:
             pt_state._close(symbol, ltp, "eod_squareoff", now_ist.strftime("%H:%M:%S"))

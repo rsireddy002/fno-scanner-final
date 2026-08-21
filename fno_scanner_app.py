@@ -350,6 +350,7 @@ def main():
     st.caption(
         f"Long-only, opens on the same delta-zone trigger as the scan above. "
         f"Max {2} open positions, checks top RVOL candidates each cycle. "
+        f"P&L calculated at 1 share/position (signal-quality check, not real sizing). "
         f"No real orders are ever placed. Resets if the app reboots."
     )
 
@@ -364,7 +365,10 @@ def main():
 
     if open_positions:
         st.write("**Open Positions**")
-        st.dataframe(pd.DataFrame(open_positions.values()), width='stretch')
+        open_df = pd.DataFrame(open_positions.values())
+        st.dataframe(open_df, width='stretch')
+        total_unrealized = open_df["unrealized_pnl"].sum()
+        st.info(f"Total unrealized P&L: ₹{total_unrealized:.2f}")
     else:
         st.caption("No open positions.")
 
@@ -373,8 +377,10 @@ def main():
         trades_df = pd.DataFrame(closed_trades)
         st.dataframe(trades_df, width='stretch')
         total_r = trades_df["r_multiple"].sum()
+        total_pnl = trades_df["pnl"].sum()
         wins = (trades_df["r_multiple"] > 0).sum()
-        st.success(f"Total R: {total_r:.2f} | Win rate: {wins}/{len(trades_df)} ({100*wins/len(trades_df):.0f}%)")
+        st.success(f"Total realized P&L: ₹{total_pnl:.2f} | Total R: {total_r:.2f} | "
+                   f"Win rate: {wins}/{len(trades_df)} ({100*wins/len(trades_df):.0f}%)")
     else:
         st.caption("No closed trades yet.")
 
