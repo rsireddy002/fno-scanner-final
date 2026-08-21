@@ -34,11 +34,19 @@ from delta_zone_scanner import evaluate_stock
 IST = ZoneInfo("Asia/Kolkata")
 
 MAX_OPEN_POSITIONS = 2          # Stage 7: rank simultaneous signals, take top 1-2
-MAX_CANDIDATES_PER_CYCLE = 10   # cap heavy delta-zone checks per poll cycle
+MAX_CANDIDATES_PER_CYCLE = 5    # cap heavy delta-zone checks per entry-check cycle
+ENTRY_CHECK_INTERVAL_SECONDS = 60  # only look for new entries this often, NOT every
+                                     # 15s poll cycle -- with slots open, this check
+                                     # runs continuously, so at 15s intervals it was
+                                     # adding ~20 extra API calls every cycle and
+                                     # sustainably starving the main quote poll's
+                                     # rate-limit budget instead of just a one-time burst.
 EOD_SQUAREOFF_TIME = datetime.time(15, 20)  # IST, matches backtest_one_day.py
 POSITION_QTY = 1  # shares per paper position -- this measures signal quality,
                    # not realistic position sizing. Change to reflect real
                    # intended quantity if you want P&L in a meaningful rupee scale.
+
+_last_entry_check_time = None  # module-level, tracks last time find_new_entries actually ran
 
 
 class PaperTradeState:
@@ -130,12 +138,27 @@ def find_new_entries(pt_state: PaperTradeState, live_df, universe: dict, access_
     a fresh delta-zone trigger. Only runs if paper trading is enabled, we're
     below the position cap, and we're not past EOD square-off (no new
     entries in the closing minutes).
+
+    Throttled to ENTRY_CHECK_INTERVAL_SECONDS: with open slots available,
+    this check would otherwise run every single 15s poll cycle indefinitely
+    (not just once like the daily baseline build), which sustainably
+    competes with the main quote poll for API rate-limit budget rather than
+    causing a one-time, self-recovering burst.
     """
+    global _last_entry_check_time
+
     open_positions, _, enabled = pt_state.get()
     if not enabled or _is_eod(now_ist):
         return
     if len(open_positions) >= MAX_OPEN_POSITIONS:
         return
+
+    if _last_entry_check_time is not None:
+        elapsed = (now_ist - _last_entry_check_time).total_seconds()
+        if elapsed < ENTRY_CHECK_INTERVAL_SECONDS:
+            return
+    _last_entry_check_time = now_ist
+
     if live_df is None or live_df.empty or "RVOL %" not in live_df.columns:
         return
 
